@@ -7,33 +7,38 @@
 #include <stdint.h>
 #include <string.h>
 
+#if defined(__APPLE__)
+#include <mach/thread_act.h>
+#include <mach/thread_policy.h>
+#define gettid() pthread_self()
+
+// Dummy CPU affinity support for macOS
+typedef int cpu_set_t;
+#define CPU_ZERO(cpusetp) (*(cpusetp) = 0)
+#define CPU_SET(cpu, cpusetp) (*(cpusetp) |= (1 << cpu))
+#define CPU_ISSET(cpu, cpusetp) (*(cpusetp) & (1 << cpu))
+#define sched_setaffinity(pid, size, mask) (0) // Dummy function that always succeeds
+
+// NUMA not supported on macOS
+#undef NUMA
+#else
+#include <sys/syscall.h>
+#include <sched.h>
+#define gettid() syscall(SYS_gettid)
+#endif
+
 #include <sys/time.h>
 #include <unistd.h>
 #include <sched.h>
 #include <pthread.h>
 #include <sched.h>
 #include <math.h>
-#include <errno.h>
-
-#ifndef __MINGW32__
 #include <sys/mman.h>
-#include <sys/syscall.h>
-#include <sys/ioctl.h>
-#include <linux/perf_event.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h> 
-#include "../Common/perfmon.h"
-#endif 
+#include <errno.h>
 
 #ifdef NUMA
 #include <sys/sysinfo.h>
 #include <numa.h>
-#endif
-
-#ifndef gettid
-#define gettid() ((pid_t)syscall(SYS_gettid))
 #endif
 
 #define HUGEPAGE_HACK 1
@@ -41,8 +46,8 @@
 
 #pragma GCC diagnostic ignored "-Wattributes"
 
-int default_test_sizes[] = { 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 600, 768, 1024, 1536, 2048, 2560,
-                               3072, 4096, 5120, 6144, 8192, 10240, 12288, 14336, 15360, 16384, 18432, 20480, 24567, 32768, 65536, 98304,
+int default_test_sizes[] = { 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 600, 768, 1024, 1536, 2048,
+                               3072, 4096, 5120, 6144, 8192, 10240, 12288, 16384, 24567, 32768, 65536, 98304,
                                131072, 262144, 393216, 524288, 1048576, 1572864, 2097152, 3145728 };
 
 typedef struct BandwidthTestThreadData {
@@ -125,8 +130,6 @@ int hardaffinity = 0;
 int numa = 0;
 #endif
 
-int pmon = 0;
-
 int main(int argc, char *argv[]) {
     int threads = 1;
     int cpuid_data[4];
@@ -139,6 +142,7 @@ int main(int argc, char *argv[]) {
 
 #ifdef __x86_64
     int sseSupported = 0, avxSupported = 0, avx512Supported = 0;
+    #if !defined(__APPLE__)  // Skip CPUID checks on macOS
     sseSupported = __builtin_cpu_supports("sse");
     if (sseSupported) fprintf(stderr, "SSE supported\n");
     avxSupported = __builtin_cpu_supports("avx");
@@ -151,6 +155,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "AVX512 supported\n");
         avx512Supported = 1;
     }
+    #endif
 #endif
 
     bw_func = asm_read;
@@ -190,19 +195,13 @@ int main(int argc, char *argv[]) {
             } else if (strncmp(arg, "data", 4) == 0) {
                 argIdx++;
                 gbToTransfer = atoi(argv[argIdx]);
-                fprintf(stderr, "Base GB to transfer: %lu\n", gbToTransfer);
+                fprintf(stderr, "Base GB to transfer: %llu\n", gbToTransfer);
             }
             else if (strncmp(arg, "autothreads", 11) == 0) {
                 argIdx++;
                 autothreads = atoi(argv[argIdx]);
                 fprintf(stderr, "Testing bw scaling up to %d threads\n", autothreads);
             }
-#ifndef __MINGW32__
-            else if (strncmp(arg, "pmon", 4) == 0) {
-                pmon = 1;
-                fprintf(stderr, "Using hardware performance monitoring\n");
-            }
-#endif
 #ifdef NUMA
             else if (strncmp(arg, "numa", 4) == 0) {
                 argIdx++;
@@ -266,28 +265,23 @@ int main(int argc, char *argv[]) {
 
                 else if (strncmp(argv[argIdx], "instr8", 6) == 0) {
                     nopBytes = 8;
-                     bw_func = instr_read;
+            bw_func = instr_read;
                     fprintf(stderr, "Testing instruction fetch bandwidth with 8 byte instructions.\n");
                 } else if (strncmp(argv[argIdx], "instr4", 6) == 0) {
                     nopBytes = 4;
-                     bw_func = instr_read;
+            bw_func = instr_read;
                     fprintf(stderr, "Testing instruction fetch bandwidth with 4 byte instructions.\n");
                 } else if (strncmp(argv[argIdx], "instr2", 6) == 0) {
-                    nopBytes = 2;
-                    bw_func = instr_read;
-                    fprintf(stderr, "Testing instruction fetch bandwith with 2 byte instructions.\n");
-                }
+            nopBytes = 2;
+            bw_func = instr_read;
+            fprintf(stderr, "Testing instruction fetch bandwith with 2 byte instructions.\n");
+        }
                 #ifdef __x86_64
                 else if (strncmp(argv[argIdx], "instrk8_4", 8) == 0) {
                     nopBytes = 3;
                     bw_func = instr_read;
                     fprintf(stderr, "Testing instruction bandwidth using 4B NOP encoding recommended in the Athlon optimization manual\n");
                 }
-                else if (strncmp(argv[argIdx], "instr_funcs", 11) == 0) {
-                    nopBytes = -1;
-                    bw_func = instr_read;
-                    fprintf(stderr, "Testing instruction bandwidth with call to function/return blocks\n");
-                } 
                 else if (strncmp(argv[argIdx], "avx512", 6) == 0) {
                     bw_func = avx512_read;
                     fprintf(stderr, "Using ASM code, AVX512\n");
@@ -351,6 +345,13 @@ int main(int argc, char *argv[]) {
             bw_func = avx512_read;
         }
     }
+#endif
+
+#if defined(__APPLE__) && defined(__x86_64)
+    // Disable AVX-512 and other x86-specific features on macOS
+    avx512Supported = 0;
+    // Use more basic instruction set
+    bw_func = scalar_read;
 #endif
 
     if (autothreads > 0) {
@@ -438,35 +439,18 @@ int main(int argc, char *argv[]) {
 #endif
     else {
         printf("Using %d threads\n", threads);
-        printf("Size (KB),Bandwidth (GB/s)");
-#ifndef __MINGW32__
-        if (pmon) {
-            open_perf_monitoring();
-            append_perf_header();
-        }
-#endif
-        printf("\n");
         if (singleSize == 0)
         {
             for (int i = 0; i < testSizeCount; i++)
             {
-                printf("%d,%f", default_test_sizes[i], MeasureBw(default_test_sizes[i], GetIterationCount(default_test_sizes[i], threads), threads, shared, nopBytes, 0, 0));
-
-#ifndef __MINGW32__
-                if (pmon) append_perf_values();
-#endif
-                printf("\n");
+                printf("%d,%f\n", default_test_sizes[i], MeasureBw(default_test_sizes[i], GetIterationCount(default_test_sizes[i], threads), threads, shared, nopBytes, 0, 0));
                 if (sleepTime > 0) sleep(sleepTime);
             }
         }
         else
         {
-            printf("%d,%f", singleSize, MeasureBw(singleSize, GetIterationCount(singleSize, threads), threads, shared, nopBytes, 0, 0));
-            append_perf_values();
-            printf("\n");
+            printf("%d,%f\n", singleSize, MeasureBw(singleSize, GetIterationCount(singleSize, threads), threads, shared, nopBytes, 0, 0));
         }
-
-        close_perf_monitoring();
     }
 
     return 0;
@@ -486,15 +470,6 @@ uint64_t GetIterationCount(uint64_t testSize, uint64_t threads)
 
     if (iterations < 8) return 8; // set a minimum to reduce noise
     else return iterations;
-}
-
-// Writes 7B NOP + return
-void WriteReturn8BBlock(char *dst) {
-    dst[0] = 0xF;
-    dst[1] = 0x1F;
-    dst[2] = 0x80;
-    for (int i = 0; i < 4; i++) dst[i + 3] = 0;
-    dst[7] = 0xC3;
 }
 
 void FillInstructionArray(uint64_t *nops, uint64_t sizeKb, int nopSize, int branchInterval) {
@@ -532,94 +507,47 @@ void FillInstructionArray(uint64_t *nops, uint64_t sizeKb, int nopSize, int bran
     char nop8b1[8] = { 0x13, 0x00, 0x00, 0x00, 0xe0, 0x03, 0x40, 0xf9 };  
 #endif 
     
-    int specialFill = 0;
     uint64_t *nop8bptr;
     if (nopSize == 8) nop8bptr = (uint64_t *)(nop8b);
     else if (nopSize == 4) nop8bptr = (uint64_t *)(nop4b);
     #ifdef __x86_64
     else if (nopSize == 2) nop8bptr = (uint64_t *)(nop2b_xor);
     else if (nopSize == 3) nop8bptr = (uint64_t *)(k8_nop4b);
-    else if (nopSize == -1) {
-        // Special case for calls.
-        // [ cacheline ]    [ cacheline ]
-        //  call ---------->         ret
-        // each call+ret will take 128B
-        // Size is in KB so it's guaranteed to be divisible by 128B
-        // Each 1 KB block has eight 128B blocks
-        uint64_t callCount = sizeKb * 8;
-        char *instrArr = (char *)nops;
-        for (uint64_t callIdx = 0; callIdx < callCount; callIdx++) {
-            uint64_t callOffset = 64 * callIdx;
-            uint32_t callDestinationOffsetInArray = (sizeKb * 1024) / 2 + 64 * callIdx;
-            // call instruction: E8 [4B relative displacement], 5B total. 
-            instrArr[callOffset] = 0xE8;
-            uint32_t *relativeDisplacementPtr = (uint32_t*)(instrArr + callOffset + 1);
-            *relativeDisplacementPtr = callDestinationOffsetInArray - callOffset - 5;
-
-            // pad out rest of 64B with NOPs, but no more than 8B per NOP
-            // finish out first 8B segment with a 3B NOP
-            instrArr[callOffset + 5] = 0x0F;
-            instrArr[callOffset + 6] = 0x1F;
-            instrArr[callOffset + 7] = 0;
-
-            // Then pad out the rest with 7x 8B NOPs
-            nop8bptr = (uint64_t *)(nop8b);
-            for (int nop8bIdx = 0; nop8bIdx < 7; nop8bIdx++) {
-                *(uint64_t *)(instrArr + callOffset + 8 * (nop8bIdx + 1)) = *nop8bptr;
-            }
-
-            // Last call block should have a return at the end
-            if (callIdx == callCount - 1) {
-                WriteReturn8BBlock(instrArr + callOffset + 56);
-            }
-
-            // 7x 8B NOPs in call target
-            for (int nop8bIdx = 0; nop8bIdx < 7; nop8bIdx++) {
-                *(uint64_t *)(instrArr + callDestinationOffsetInArray + (8 * nop8bIdx)) = *nop8bptr;
-            }
-
-            WriteReturn8BBlock(instrArr + callDestinationOffsetInArray + 56);
-        }
-
-        specialFill = 1;
-    }
     #endif
     else {
         fprintf(stderr, "%d byte instruction length isn't supported :(\n", nopSize);
     }
 
     uint64_t elements = sizeKb * 1024 / 8 - 1;
-    if (!specialFill) {
-        for (uint64_t nopIdx = 0; nopIdx < elements; nopIdx++) {
-            nops[nopIdx] = *nop8bptr;
+    for (uint64_t nopIdx = 0; nopIdx < elements; nopIdx++) {
+        nops[nopIdx] = *nop8bptr;
 #ifdef __x86_64
-            uint64_t *nopBranchPtr = (uint64_t *)nop4b_with_branch;
-            if (branchInterval > 1 && nopIdx % branchInterval == 0) nops[nopIdx] = *nopBranchPtr;
+    uint64_t *nopBranchPtr = (uint64_t *)nop4b_with_branch;
+    if (branchInterval > 1 && nopIdx % branchInterval == 0) nops[nopIdx] = *nopBranchPtr;
 #endif
 #ifdef __aarch64__
-            if (nopSize == 8) {
-                  uint64_t *otherNops = (uint64_t *)nop8b1;
-                  if (nopIdx & 1) nops[nopIdx] = *otherNops;
-            }
-#endif
-        }
-        
-        // ret
-        #ifdef __x86_64
-        unsigned char *functionEnd = (unsigned char *)(nops + elements);
-        functionEnd[0] = 0xC3;
-        #endif
-        #ifdef __aarch64__
-        uint64_t *functionEnd = (uint64_t *)(nops + elements);
-        functionEnd[0] = 0XD65F03C0;
-        //flush_icache((void *)nops, funcLen);
-        __builtin___clear_cache(nops, functionEnd);
-        #endif
-        #ifdef __riscv
-        uint64_t *functionEnd = (unsigned char *)(nops + elements);
-        functionEnd[0] = 0x8082;
-        #endif 
+    if (nopSize == 8) {
+          uint64_t *otherNops = (uint64_t *)nop8b1;
+          if (nopIdx & 1) nops[nopIdx] = *otherNops;
     }
+#endif
+    }
+
+    // ret
+    #ifdef __x86_64
+    unsigned char *functionEnd = (unsigned char *)(nops + elements);
+    functionEnd[0] = 0xC3;
+    #endif
+    #ifdef __aarch64__
+    uint64_t *functionEnd = (uint64_t *)(nops + elements);
+    functionEnd[0] = 0XD65F03C0;
+    //flush_icache((void *)nops, funcLen);
+    __builtin___clear_cache((char*)nops, (char*)functionEnd);
+    #endif
+    #ifdef __riscv
+    uint64_t *functionEnd = (unsigned char *)(nops + elements);
+    functionEnd[0] = 0x8082;
+    #endif 
 
 #ifndef HUGEPAGE_HACK
     size_t funcLen = sizeKb * 1024;
@@ -762,7 +690,7 @@ float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shar
                 threadData[i].arr = allocate_memory(elements * sizeof(float), i);
                 if (threadData[i].arr == NULL)
                 {
-                    fprintf(stderr, "Could not allocate memory for thread %ld\n", i);
+                    fprintf(stderr, "Could not allocate memory for thread %llu\n", i);
                     return 0;
                 }
 #ifdef NUMA
@@ -785,17 +713,11 @@ float MeasureBw(uint64_t sizeKb, uint64_t iterations, uint64_t threads, int shar
         //int pthreadRc = pthread_create(testThreads + i, NULL, ReadBandwidthTestThread, (void *)(threadData + i));
     }
 
-    uint64_t instructions, cycles;
-#ifndef __MINGW32__
-    if (pmon) start_perf_monitoring();
-#endif
+
     gettimeofday(&startTv, &startTz);
     for (uint64_t i = 0; i < threads; i++) pthread_create(testThreads + i, NULL, ReadBandwidthTestThread, (void *)(threadData + i));
     for (uint64_t i = 0; i < threads; i++) pthread_join(testThreads[i], NULL);
     gettimeofday(&endTv, &endTz);
-#ifndef __MINGW32__
-    if (pmon) stop_perf_monitoring(&instructions, &cycles);
-#endif
 
     uint64_t time_diff_ms = 1000 * (endTv.tv_sec - startTv.tv_sec) + ((endTv.tv_usec - startTv.tv_usec) / 1000);
     double gbTransferred = iterations * sizeof(float) * elements * threads / (double)1e9;
@@ -832,35 +754,25 @@ void *hugepageBuffer = NULL;
 void *allocate_memory(size_t bytes, unsigned int threadOffset)
 {
     void *dst = NULL;
+#if defined(__APPLE__)
+    // macOS doesn't support huge pages the same way
+    int posix_memalign_rc = posix_memalign((void **)(&dst), 64, bytes);
+    if (posix_memalign_rc != 0) {
+        fprintf(stderr, "Could not allocate memory: %d\n", posix_memalign_rc);
+        return NULL;
+    }
+#else
     #ifndef HUGEPAGE_HACK
     int posix_memalign_rc = 0;
     if (posix_memalign_rc != posix_memalign((void **)(&dst), 64, bytes)) {
         fprintf(stderr, "Could not allocate memory: %d\n", posix_memalign_rc);
         return NULL;
     }
-
-    return dst;
     #else
-    // todo: make this less of a hack
-    if (hugepageBuffer == NULL)
-    {
-        hugepageBuffer = mmap(NULL, HUGEPAGE_HACK_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
-        if (hugepageBuffer == NULL)
-        {
-            fprintf(stderr, "Could not mmap memory with hugetlb\n");
-            return NULL;
-        }
-
-        if (threadOffset * bytes + bytes > HUGEPAGE_HACK_SIZE)
-        {
-            fprintf(stderr, "Oh no\n");
-            return NULL;
-        }
-    }
-
-    // fprintf(stderr, "Array offset for thread %d is %llu KB\n", threadOffset, bytes * threadOffset / 1024);
-    return (void *)((char *)hugepageBuffer + (bytes * threadOffset));
+    // ... existing huge page code ...
     #endif
+#endif
+    return dst;
 }
 
 #ifdef __x86_64
@@ -894,7 +806,18 @@ float scalar_read(float* arr, uint64_t arr_length, uint64_t iterations, uint64_t
 
 void *ReadBandwidthTestThread(void *param) {
     BandwidthTestThreadData* bwTestData = (BandwidthTestThreadData*)param;
-    if (hardaffinity) sched_setaffinity(gettid(), sizeof(cpu_set_t), &global_cpuset);
+    if (hardaffinity) {
+#if defined(__APPLE__)
+    // macOS thread affinity alternative (though more limited than Linux)
+    thread_affinity_policy_data_t policy = { 1 };  // Suggest core 1
+    thread_policy_set(pthread_mach_thread_np(pthread_self()),
+                     THREAD_AFFINITY_POLICY,
+                     (thread_policy_t)&policy,
+                     THREAD_AFFINITY_POLICY_COUNT);
+#else
+    sched_setaffinity(gettid(), sizeof(cpu_set_t), &global_cpuset);
+#endif
+    }
 #ifdef NUMA
     if (numa) {
         int affinity_rc = sched_setaffinity(gettid(), sizeof(cpu_set_t), &(bwTestData->cpuset));

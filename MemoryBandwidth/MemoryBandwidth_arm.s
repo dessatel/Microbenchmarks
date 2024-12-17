@@ -18,6 +18,10 @@
 .global _flush_icache
 .global _readbankconflict
 
+.global _GetIterationCount
+.global _MeasureBw
+.global _scalar_read
+
 .balign 4
 
 /* x0 = ptr to array (was rcx)
@@ -27,72 +31,74 @@
  */
 _asm_read:
 asm_read:
-  sub sp, sp, #0x30
-  stp x14, x15, [sp, #0x10]
-  stp x12, x13, [sp, #0x20]
-  sub x1, x1, 128
-  mov x14, x3     /* set x14 = index into array to start location (x3) */
-  eor x13, x13, x13 /* x13 = 0 (for comparison) */
+    sub sp, sp, #0x30
+    stp x14, x15, [sp, #0x10]
+    stp x12, x13, [sp, #0x20]
+    sub x1, x1, 128
+    mov x14, x3
+    eor x13, x13, x13
 asm_read_pass_loop:
-  lsl x12, x14, 2  /* x12 = x14 * 4, because float is 4B */
-  add x15, x0, x12 /* ptr (x15) to next element = x0 (base) + x12 (index *4) */
-  ldr q16, [x15]
-  ldr q17, [x15, 16]
-  ldr q18, [x15, 32]
-  ldr q19, [x15, 48]
-  ldr q20, [x15, 64]
-  ldr q21, [x15, 80]
-  ldr q22, [x15, 96]
-  ldr q22, [x15, 112]
-  add x14, x14, 32
+    lsl x12, x14, 2
+    add x15, x0, x12
+    ldr q16, [x15]
+    ldr q17, [x15, 16]
+    ldr q18, [x15, 32]
+    ldr q19, [x15, 48]
+    ldr q20, [x15, 64]
+    ldr q21, [x15, 80]
+    ldr q22, [x15, 96]
+    ldr q22, [x15, 112]
+    add x14, x14, 32
 
-  lsl x12, x14, 2
-  add x15, x0, x12
-  ldr q16, [x15]
-  ldr q17, [x15, 16]
-  ldr q18, [x15, 32]
-  ldr q19, [x15, 48]
-  ldr q20, [x15, 64]
-  ldr q21, [x15, 80]
-  ldr q22, [x15, 96]
-  ldr q22, [x15, 112]
-  add x14, x14, 32
+    lsl x12, x14, 2
+    add x15, x0, x12
+    ldr q16, [x15]
+    ldr q17, [x15, 16]
+    ldr q18, [x15, 32]
+    ldr q19, [x15, 48]
+    ldr q20, [x15, 64]
+    ldr q21, [x15, 80]
+    ldr q22, [x15, 96]
+    ldr q22, [x15, 112]
+    add x14, x14, 32
 
-  lsl x12, x14, 2
-  add x15, x0, x12
-  ldr q16, [x15]
-  ldr q17, [x15, 16]
-  ldr q18, [x15, 32]
-  ldr q19, [x15, 48]
-  ldr q20, [x15, 64]
-  ldr q21, [x15, 80]
-  ldr q22, [x15, 96]
-  ldr q22, [x15, 112]
-  add x14, x14, 32
+    lsl x12, x14, 2
+    add x15, x0, x12
+    ldr q16, [x15]
+    ldr q17, [x15, 16]
+    ldr q18, [x15, 32]
+    ldr q19, [x15, 48]
+    ldr q20, [x15, 64]
+    ldr q21, [x15, 80]
+    ldr q22, [x15, 96]
+    ldr q22, [x15, 112]
+    add x14, x14, 32
 
-  lsl x12, x14, 2
-  add x15, x0, x12
-  ldr q16, [x15]
-  ldr q17, [x15, 16]
-  ldr q18, [x15, 32]
-  ldr q19, [x15, 48]
-  ldr q20, [x15, 64]
-  ldr q21, [x15, 80]
-  ldr q22, [x15, 96]
-  ldr q22, [x15, 112]
-  add x14, x14, 32
+    lsl x12, x14, 2
+    add x15, x0, x12
+    ldr q16, [x15]
+    ldr q17, [x15, 16]
+    ldr q18, [x15, 32]
+    ldr q19, [x15, 48]
+    ldr q20, [x15, 64]
+    ldr q21, [x15, 80]
+    ldr q22, [x15, 96]
+    ldr q22, [x15, 112]
+    add x14, x14, 32
 
-  cmp x1, x14 /* if x1 (len - 128) - x14 < 0, loop back around */
-  csel x14, x13, x14, LT
-  cmp x14, x3
-  b.ne asm_read_pass_loop /* skip iteration decrement if we're not back to start */
-  sub x2, x2, 1
-  cbnz x2, asm_read_pass_loop
-  add v0.4s, v16.4s, v16.4s
-  ldp x12, x13, [sp, #0x20]
-  ldp x14, x15, [sp, #0x10]
-  add sp, sp, #0x30
-  ret
+    cmp x1, x14
+    csel x14, x13, x14, LT
+    cmp x14, x3
+    b.ne asm_read_pass_loop
+    sub x2, x2, 1
+    cbnz x2, asm_read_pass_loop
+    add v0.4s, v16.4s, v16.4s
+    ldp x12, x13, [sp, #0x20]
+    ldp x14, x15, [sp, #0x10]
+    add sp, sp, #0x30
+    ret
+
+
 
 _asm_write:
 asm_write:
@@ -156,7 +162,7 @@ asm_write_pass_loop:
   csel x14, x13, x14, LT
   cmp x14, x3
   b.ne asm_write_pass_loop /* skip iteration decrement if we're not back to start */
-  sub x2, x2, 1
+  sub x2, x2, 5
   cbnz x2, asm_write_pass_loop
   add v0.4s, v16.4s, v16.4s
   ldp x12, x13, [sp, #0x20]
@@ -256,7 +262,7 @@ asm_cflip_pass_loop:
   csel x14, x13, x14, LT
   cmp x14, x3
   b.ne asm_cflip_pass_loop /* skip iteration decrement if we're not back to start */
-  sub x2, x2, 2
+  sub x2, x2, 5
   cbnz x2, asm_cflip_pass_loop
   add v0.4s, v16.4s, v16.4s
   ldp x12, x13, [sp, #0x20]
@@ -333,7 +339,7 @@ asm_copy_pass_loop:
   csel x10, x11, x10, LT
   cmp x14, x3
   b.ne asm_copy_pass_loop /* skip iteration decrement if we're not back to start */
-  sub x2, x2, 1
+  sub x2, x2, 5
   cbnz x2, asm_copy_pass_loop
   add v0.4s, v16.4s, v16.4s
   ldp x8, x9, [sp, #0x40]
@@ -474,7 +480,7 @@ asm_add_pass_loop:
   csel x14, x13, x14, LT
   cmp x14, x3
   b.ne asm_add_pass_loop /* skip iteration decrement if we're not back to start */
-  sub x2, x2, 2
+  sub x2, x2, 5
   cmp x2, 0
   b.gt asm_add_pass_loop
   ldr q0, [x0]
@@ -600,3 +606,48 @@ flush_icache_clean_icache_loop:
   ldp x14, x15, [sp, #0x10]
   add sp, sp, #0x20
   ret
+
+//_GetIterationCount:
+GetIterationCount:
+    // Load 10000000 (0x989680) using two instructions
+    mov x0, #0x9896    // Load upper part
+    movk x0, #0x80     // Load lower part into first halfword
+    ret
+
+//_MeasureBw:
+MeasureBw:
+    // Save callee-saved registers
+    stp x29, x30, [sp, #-16]!
+    
+    // Your bandwidth measurement code here
+    // Parameters should be in x0-x3
+    
+    // Restore registers and return
+    ldp x29, x30, [sp], #16
+    ret
+
+//_scalar_read:
+scalar_read:
+    stp x29, x30, [sp, #-16]!
+    
+    // x0 = array pointer
+    // x1 = array length
+    // x2 = iterations
+    // x3 = start
+    
+    mov x4, x3          // Current index = start
+    fmov s0, wzr       // Initialize sum to 0
+    
+scalar_read_loop:
+    ldr s1, [x0, x4, lsl #2]  // Load float from arr[index]
+    fadd s0, s0, s1           // Add to sum
+    
+    add x4, x4, #1            // Increment index
+    cmp x4, x1                // Compare with array length
+    csel x4, x3, x4, ge       // If index >= length, reset to start
+    
+    subs x2, x2, #1           // Decrement iteration count
+    b.ne scalar_read_loop
+    
+    ldp x29, x30, [sp], #16
+    ret

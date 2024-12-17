@@ -12,7 +12,15 @@ amd64-numa:
 	$(CC) $(CFLAGS) -DNUMA MemoryBandwidth.c MemoryBandwidth_x86.s -o MemoryBandwidth_numa_amd64 $(LDFLAGS) -lnuma
 
 aarch64:
+ifeq ($(shell uname),Darwin)
+	@if [ ! -f MemoryBandwidth_arm.s ]; then \
+		echo "Error: MemoryBandwidth_arm.s not found"; \
+		exit 1; \
+	fi
+	$(CC) $(CFLAGS) MemoryBandwidth.c MemoryBandwidth_arm.s -o MemoryBandwidth_aarch64 $(LDFLAGS) -D__APPLE__
+else
 	$(CC) $(CFLAGS) MemoryBandwidth.c MemoryBandwidth_arm.s -o MemoryBandwidth_aarch64 $(LDFLAGS)
+endif
 
 termux:
 	gcc -O3 -pthread MemoryBandwidth.c MemoryBandwidth_arm.s -o MemoryBandwidth_aarch64 -lm
@@ -29,6 +37,6 @@ w64:
 ci: amd64 amd64-numa aarch64 w64
 
 clean:
-	rm -f *.o && find . -type f -executable -delete
+	rm -f *.o MemoryBandwidth_* *.exe
 
 .PHONY: all ci clean

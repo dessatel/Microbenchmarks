@@ -392,3 +392,8 @@ FodyWeavers.xsd
 # JetBrains Rider
 .idea/
 *.sln.iml
+venv/
+.DS_*
+
+
+MemoryBandwidth/MemoryBandwidth_aarch64
