@@ -1,3 +1,17 @@
+Experimental macOS version of MemoryBandwidth.
+
+# To Compile
+cd MemoryBandwidth
+make aarch64
+
+# To Run
+./MemoryBandwidth_aarch64
+
+# to plot, copy valuses to .py
+pip install -r ../requirements.txt
+python plot.py
+
+
 # Memory Bandwidth Benchmark
 This is a C and assembly project that tests memory bandwidth. There's a version in this directory for Linux that uses POSIX threads for multithreading. There's a Windows version in the MemoryBandwidth subdirectory that uses Windows threading APIs. The Windows version requires Visual Studio and nasm in the path to compile.
 
